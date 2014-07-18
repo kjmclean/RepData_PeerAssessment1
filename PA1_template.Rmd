@@ -3,18 +3,185 @@
 
 ## Loading and preprocessing the data
 
+The following libraries were loaded to facilitate the analysis:
+```{r}
+library(knitr)
+library(ggplot2)
+library(magrittr)
+library(lubridate)
+library(dplyr)
+```
+
+Data was downloaded directly via the coursera website, unzipped, read into R
+as a dataframe. The "date" column was converted from 'character' to 'POSIXt' date class,
+and the steps column was conveted from 'integer' to 'numeric'.
+```{r}
+temp <- tempfile()
+url <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2Factivity.zip"
+download.file(url, temp, method = "curl")
+activity <- read.csv(unz(temp, "activity.csv"))
+unlink(temp)
+
+activity$date <- ymd(activity$date)
+activity$steps <- as.numeric(activity$steps)
+```
 
 
 ## What is mean total number of steps taken per day?
+Using dplyr, a dataframe "steps_per_day" was generated that sums total steps across
+all time intervals for a given day.
+```{r}
+steps_per_day <-
+    activity %>%
+        group_by(date) %>%
+        summarise(total = sum(steps, na.rm = TRUE))
+```
 
+The "steps_per_day" dataframe was used to produce the following histogram:
+```{r}
+hist(steps_per_day$total, breaks = 11, main = "Total steps per day", 
+     xlab = "steps per day")
+```
+
+```{r}
+mean_per_day <- mean(steps_per_day$total)
+median_per_day <- median(steps_per_day$total)
+```
+
+From this data, the mean number of steps per day is `r mean_per_day`, and the median steps per day is `r median_per_day`.
 
 
 ## What is the average daily activity pattern?
 
+Using dplyr, the dataframe "steps_per_interval" was generated that determines the mean number of steps
+for each time interval across all days in the dataset.
+```{r}
+steps_per_interval <-
+    activity %>%
+    group_by(interval) %>%
+    summarise(total = mean(steps, na.rm = TRUE))
+```
 
+A timeseries plot of the "steps_per_interval" data was produced using ggplot2. 
+```{r}
+ggplot(steps_per_interval, aes(interval, total)) + geom_line() + 
+    xlab("time interval") + ylab("mean number of steps")
+```
+
+To determine the interval with the most steps on average, the "steps_per_interval" was
+arranged in descending order by mean number of steps, and printed using the 'head'
+function to return the intervals with the five highest mean number of steps.
+```{r}
+head(arrange(steps_per_interval, desc(total)), 5)
+```
+
+From this data, it is clear that interval 835 has the highest mean number of steps with an average of 206.2 steps across all days.
 
 ## Imputing missing values
+
+The number of "NA" values in the "steps" column of the "activity" dataframe were 
+calculated using the following:
+```{r}
+missing <- is.na(activity$steps) %>% which %>% length
+```
+
+The number of missing values is `r missing`.
+
+I have decided to replace these missing values with the median number of steps per
+interval from the "steps_per_interval" dataframe. 
+```{r}
+replacement <- median(steps_per_interval$total)
+```
+
+The value being used for the imputation is `r replacement` steps.
+
+Using dplyr, the "activity" data frame was regenerated with all NA values substituted
+with the "replacement" value of `r replacement` steps.
+```{r}
+imputed_activity <-
+    activity %>%
+        group_by(date, interval) %>%
+        mutate(steps = ifelse(is.na(steps),
+                replacement,
+                steps)
+               ) %>%
+        as.data.frame
+```
+
+dplyr was then used again to generate the "imp_steps_per_day" dataframe which sums
+the total number of steps for each interval across each day. This dataframe can then
+be used to determine the mean and median of the imputed dataset.
+```{r}
+imp_steps_per_day <-
+        imputed_activity %>%
+            group_by(date) %>%
+            summarise(total = sum(steps, na.rm = TRUE))
+```
+```{r}
+imp_mean_per_day <- mean(imp_steps_per_day$total)
+imp_median_per_day <- median(imp_steps_per_day$total)
+```
+
+The mean from the imputed data is `r imp_mean_per_day` and the median is 
+`r imp_median_per_day`. The median is identical to that of the non-imputed dataset. The
+mean of the imputed dataset, however, has increased its value by ~14%.
+
+A histogram of the data largely maintains the shape of the distribution. However, it
+is clear that the large number of "zeroes" in the original dataset have now been 
+replaced with `r replacement` in the imputed dataset.
+```{r}
+hist(imp_steps_per_day$total, breaks = 11, main = "Total steps per day", 
+     xlab = "steps per day")
+```
+
 
 
 
 ## Are there differences in activity patterns between weekdays and weekends?
+
+Using dplyr, a new dataframe, 'wkds', was generated that is identical to the imputed
+data "imputed_activity", except it contains an additional factor column listing each 
+date as either a "Weekday"" or "Weekend". This was done by first generating the "day"
+column using the "weekdays()" function, followed by grep-substitution of all day names
+to the appropriate "Weekend" or "Weekday" substitution.
+```{r}
+wkds <- 
+    imputed_activity %>%
+        group_by(date, interval) %>%
+        summarise(day = weekdays(date), steps) %>%
+        as.data.frame
+
+wkds <- sapply(wkds, gsub, pattern = '(Saturday)|(Sunday)', 
+               replacement = 'Weekend') %>%
+                as.data.frame
+
+wkds <- sapply(wkds, gsub, pattern = "^.*day$", 
+                replacement = 'Weekday') %>%
+                as.data.frame
+wkds$day <- wkds$day %>% as.factor
+wkds$steps <- as.numeric(wkds$steps)
+```
+
+To determine the steps per interval pattern across weekends and weekdays, the "wkds" was
+run through a dplyr pipe to generate the dataframe "steps_per_day_interval" which 
+determines the mean number of steps for each interval across all days in the dataset
+while maintaining the weekend/weekday designations as factors.
+```{r}
+steps_per_day_interval <-
+    wkds %>%
+    group_by(interval, day) %>%
+    summarise(total = mean(steps, na.rm = TRUE))
+
+steps_per_day_interval$interval <- steps_per_day_interval$interval %>% as.numeric
+```
+
+A faceted timeseries plot of weekend and weekday step activity was produced using 
+ggplot2. The activity patterns are very similar across weekends and weekdays, and both
+resemble the pattern from the original, non-imputed dataset.
+```{r}
+
+ggplot(steps_per_day_interval, aes(interval, total)) + geom_line() +
+           facet_grid(day ~ .) + xlab("time interval") + ylab("mean number of steps")
+```
+
+
